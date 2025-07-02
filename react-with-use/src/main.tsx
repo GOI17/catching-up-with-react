@@ -138,9 +138,9 @@ const useDeleteTodo = () => {
 }
 
 const App = () => {
+  const formRef = useRef<HTMLLabelElement>(null);
   const { query: queryTodos, refetch } = useGetTodos();
   const todoCreator = useCreateTodo();
-  const todoDelete = useDeleteTodo();
 
   const handleOnSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -159,15 +159,10 @@ const App = () => {
     refetch();
   }
 
-  const handleOnDeleteTodo = (id: Todo["id"]) => () => {
-    todoDelete(id);
-    refetch();
-  }
-
   return (
     <main style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 30 }}>
       <form onSubmit={handleOnSubmit} style={{ display: "flex", flexDirection: "column", gap: 15 }}>
-        <label title='title'>
+        <label title='title' ref={formRef}>
           <span> Title:</span>
           <input name='title' type='text' placeholder='My awesome todo' required />
         </label>
@@ -187,30 +182,9 @@ const App = () => {
       }}>
         <Suspense fallback="Loading...">
           {queryTodos?.then((todos) => {
+            if (!todos?.length) return <h3 onClick={() => formRef.current?.focus()}>No todos, click on me to create your first todo</h3>
             return todos?.map((todo) => {
-              return (
-                <li
-                  style={{
-                    border: "1px solid grey",
-                    flexGrow: 33.33,
-                    padding: 4,
-                  }}
-                  key={todo.id}
-                >
-                  <article>
-                    <header>
-                      <h1>{todo.title}</h1>
-                    </header>
-                    <section>
-                      <p>{todo.description}</p>
-                    </section>
-                    <section>
-                      <button>Edit</button>
-                      <button onClick={handleOnDeleteTodo(todo.id)}>Delete</button>
-                    </section>
-                  </article>
-                </li>
-              )
+              return <Todo key={todo.id} {...todo} />
             })
           })}
         </Suspense>
@@ -218,6 +192,48 @@ const App = () => {
     </main>
   );
 }
+
+const Todo = ({ id, status, title, description }: Pick<Todo, "id" | "status" | 'title' | "description">) => {
+  const [updateStatus, updateStatusSet] = useState(false);
+  const todoDelete = useDeleteTodo();
+
+  const handleOnDeleteTodo = (id: Todo["id"]) => () => {
+    todoDelete(id);
+  }
+
+  const handleOnUpdateTodoStatus = () => {
+    updateStatusSet(true);
+  }
+
+  return (
+    <li
+      style={{
+        border: "1px solid grey",
+        flexGrow: 33.33,
+        maxWidth: "33.33%",
+        padding: 4,
+      }}
+      key={id}
+    >
+      <article>
+        <header>
+          <h1>{title}</h1>
+        </header>
+        <section>
+          {updateStatus
+            ? <select><option>New</option></select>
+            : <p onClick={handleOnUpdateTodoStatus}>{status.replace("_", " ")}</p>
+          }
+          <p>{description}</p>
+        </section>
+        <section>
+          <button>Edit</button>
+          <button onClick={handleOnDeleteTodo(id)}>Delete</button>
+        </section>
+      </article>
+    </li>
+  )
+};
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
