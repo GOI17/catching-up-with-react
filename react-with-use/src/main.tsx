@@ -1,10 +1,22 @@
-import { createContext, StrictMode, Suspense, use, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PropsWithChildren } from 'react'
+import {
+  createContext,
+  StrictMode,
+  Suspense,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type PropsWithChildren
+} from 'react'
 import { createRoot } from 'react-dom/client'
-import './index.css'
+import { AsyncStore } from './asyncStore'
 
 const tables = {
-  todos: "todos"
-}
+  todos: 'todos'
+} as const;
 
 interface CRUD<R, I> {
   get(resourceId: I): Promise<R | null>;
@@ -13,192 +25,6 @@ interface CRUD<R, I> {
   create(resource: R): Promise<void>;
   update(id: I, resource: Partial<R>): Promise<void>;
   delete(resourceId: I): Promise<void>;
-}
-
-interface DataSource<R, I> {
-  get(resourceId: I): Promise<R | null>;
-  getAll(): Promise<Array<R> | null>;
-  create(resource: R): Promise<void>;
-  update(resource: Partial<R>): Promise<void>;
-  delete(resourceId: I): Promise<void>;
-}
-
-
-class TodosStore implements DataSource<Todo, Todo["id"]> {
-  _store: Promise<IDBDatabase | null>;
-
-  _initializeStore(): Promise<IDBDatabase | null> {
-    return new Promise((resolve, reject) => {
-      const store = globalThis.indexedDB.open("react-with-use", 4);
-
-      const onDbSuccess = (event: Event) => {
-        const hasResult = event.target !== null && 'result' in event.target;
-        if (!hasResult) throw new Error("No db found");
-
-        const db = event.target.result as IDBDatabase;
-        db.onversionchange = function() {
-          const table = this?.createObjectStore(tables.todos)
-          table?.createIndex("id", "id", { unique: true });
-          table?.createIndex("title", "title", { unique: true });
-        }
-
-        resolve(db);
-      };
-
-      const onDbError = () => {
-        reject("TodosStore: Db error.");
-      };
-
-      const onDbBlocked = () => {
-        reject("TodosStore: Db blocked.");
-      };
-
-      const onDbUpgrade = (event: Event) => {
-        const hasResult = event.target !== null && 'result' in event.target;
-        if (!hasResult) throw new Error("No db found");
-        const db = event.target.result as IDBDatabase;
-        const table = db?.createObjectStore(tables.todos)
-        table?.createIndex("id", "id", { unique: true });
-        table?.createIndex("title", "title", { unique: true });
-      };
-
-      store.onsuccess = onDbSuccess;
-      store.onerror = onDbError;
-      store.onblocked = onDbBlocked;
-      store.onupgradeneeded = onDbUpgrade;
-    });
-
-  }
-
-  constructor() {
-    this._store = this._initializeStore();
-  }
-
-  async get(resourceId: Todo["id"]): Promise<Todo | null> {
-    try {
-      const transaction = (await this._store)?.transaction(tables.todos, "readwrite")
-      if (!transaction) {
-        console.log("TodosStore: No transaction found.")
-        return Promise.resolve(null);
-      };
-      const store = transaction.objectStore(tables.todos);
-      if (!store) {
-        console.log("TodosStore: No creator method found.")
-        return Promise.resolve(null);
-      };
-      return Promise.resolve(store?.get(resourceId).result as Todo);
-    } catch (error) {
-      throw new Error("TodosStore: Get query failed.");
-    }
-  }
-
-  async getAll(): Promise<Todo[] | null> {
-    try {
-      const transaction = (await this._store)?.transaction(tables.todos, "readwrite")
-      if (!transaction) {
-        console.log("TodosStore: No transaction found.")
-        return Promise.resolve(null);
-      };
-      const store = transaction.objectStore(tables.todos);
-      if (!store) {
-        console.log("TodosStore: No creator method found.")
-        return Promise.resolve(null);
-      };
-      return new Promise((resolve, reject) => {
-        const result = store.getAll();
-        result.onerror = () => {
-          reject();
-        }
-        result.onsuccess = (e) => {
-          console.log({ e })
-          resolve(e.target.result as Todo[])
-        }
-      });
-    } catch (error) {
-      throw new Error("TodosStore: Get query failed.");
-    }
-  }
-
-  async create(resource: Todo): Promise<void> {
-    try {
-      const transaction = (await this._store)?.transaction(tables.todos, "readwrite")
-      if (!transaction) {
-        throw new Error("TodosStore: No creator method found.");
-      };
-      const store = transaction.objectStore(tables.todos);
-      if (!store) {
-        throw new Error("TodosStore: No creator method found.");
-      };
-      return new Promise((resolve, reject) => {
-        const result = store?.add(resource, resource.id);
-        result.onsuccess = (e) => { console.log({ result: e }) }
-        result.onerror = (e) => { console.log({ result: e }) }
-        result.onerror = () => {
-          reject();
-        }
-        result.onsuccess = (e) => {
-          console.log({ e })
-          resolve()
-        }
-      });
-    } catch (error) {
-      throw new Error("TodosStore: Get query failed.");
-    }
-  }
-
-  async update(resource: Partial<Omit<Todo, "id">> & Pick<Todo, "id">): Promise<void> {
-    try {
-      const transaction = (await this._store)?.transaction(tables.todos, "readwrite")
-      if (!transaction) {
-        throw new Error("TodosStore: No creator method found.");
-      };
-      const store = transaction.objectStore(tables.todos);
-      if (!store) {
-        throw new Error("TodosStore: No creator method found.");
-      };
-      return new Promise((resolve, reject) => {
-        const result = store?.put(resource, resource.id);
-        result.onsuccess = (e) => { console.log({ result: e }) }
-        result.onerror = (e) => { console.log({ result: e }) }
-        result.onerror = () => {
-          reject();
-        }
-        result.onsuccess = (e) => {
-          console.log({ e })
-          resolve()
-        }
-      });
-    } catch (error) {
-      throw new Error("TodosStore: Get query failed.");
-    }
-  }
-
-  async delete(resourceId: Todo["id"]): Promise<void> {
-    try {
-      const transaction = (await this._store)?.transaction(tables.todos, "readwrite")
-      if (!transaction) {
-        throw new Error("TodosStore: No creator method found.");
-      };
-      const store = transaction.objectStore(tables.todos);
-      if (!store) {
-        throw new Error("TodosStore: No creator method found.");
-      };
-      return new Promise((resolve, reject) => {
-        const result = store?.delete(resourceId);
-        result.onsuccess = (e) => { console.log({ result: e }) }
-        result.onerror = (e) => { console.log({ result: e }) }
-        result.onerror = () => {
-          reject();
-        }
-        result.onsuccess = (e) => {
-          console.log({ e })
-          resolve()
-        }
-      });
-    } catch (error) {
-      throw new Error("TodosStore: Get query failed.");
-    }
-  }
 }
 
 interface Todo {
@@ -214,31 +40,31 @@ interface Todo {
 class TodosService implements CRUD<Todo, Todo["id"]> {
   _source
 
-  constructor(source: DataSource<Todo, Todo["id"]>) {
+  constructor(source: AsyncStore<Todo, Todo["id"]>) {
     this._source = source;
   }
 
   create(resource: Todo): Promise<void> {
-    return this._source.create(resource);
+    return this._source.create(tables.todos, resource);
   }
 
   update(id: Todo["id"], resource: Partial<Todo>): Promise<void> {
     const updates = { id, ...resource };
-    return this._source.update(updates);
+    return this._source.update(tables.todos, updates);
   }
 
   delete(resourceId: Todo["id"]): Promise<void> {
-    return this._source.delete(resourceId);
+    return this._source.delete(tables.todos, resourceId);
   }
 
   async get(resourceId: Todo["id"]): Promise<Todo | null> {
-    const result = await this._source.get(resourceId);
+    const result = await this._source.get(tables.todos, resourceId);
     if (!result) return null;
     return result;
   };
 
   async getAll<F extends keyof Todo>(filter?: F, value?: Todo[F]): Promise<Todo[] | null> {
-    const list = await this._source.getAll();
+    const list = await this._source.getAll(tables.todos);
     if (!filter) return list;
     if (!value) return list;
     const filteredList = list?.filter((v) => v[filter] === value);
@@ -251,8 +77,16 @@ class TodosService implements CRUD<Todo, Todo["id"]> {
 const TodoStoreContext = createContext<CRUD<Todo, Todo["id"]> | null>(null);
 
 const StoreProvider = ({ children }: PropsWithChildren<{}>) => {
-  const store = useMemo(() => new TodosStore(), []);
+  const store = useMemo(() => new AsyncStore<Todo, Todo["id"]>(), []);
   const service = useMemo(() => new TodosService(store), []);
+
+  useEffect(() => {
+    store.createUserTables((creator) => {
+      const table = creator(tables.todos)
+      table.createIndex("id", "id", { unique: true });
+      table.createIndex("title", "title", { unique: true });
+    });
+  }, []);
 
   return (
     <TodoStoreContext.Provider value={service}>
@@ -293,9 +127,20 @@ const useCreateTodo = () => {
   return onCreate;
 }
 
+const useDeleteTodo = () => {
+  const ctx = use(TodoStoreContext);
+
+  const onDelete = useCallback((todoId: Todo["id"]) => {
+    ctx?.delete(todoId);
+  }, []);
+
+  return onDelete;
+}
+
 const App = () => {
   const { query: queryTodos, refetch } = useGetTodos();
   const todoCreator = useCreateTodo();
+  const todoDelete = useDeleteTodo();
 
   const handleOnSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -303,7 +148,7 @@ const App = () => {
     const newTodo: Todo = {
       id: globalThis.crypto.randomUUID(),
       description: form.get("description") as Todo["description"],
-      title: form.get("description") as Todo["title"],
+      title: form.get("title") as Todo["title"],
       completedBy: null,
       createdAt: new Date(),
       status: "new",
@@ -314,39 +159,64 @@ const App = () => {
     refetch();
   }
 
-  return (<>
-    <form onSubmit={handleOnSubmit} style={{ display: "flex", flexDirection: "column", gap: 15 }}>
-      <label title='title'>
-        <span> Title:</span>
-        <input name='title' type='text' placeholder='My awesome todo' required />
-      </label>
-      <label title='description'>
-        <span> Description:</span>
-        <input name='description' type='text' placeholder='I have to take my dogs out...' required />
-      </label>
-      <button type='submit'>Create</button>
-    </form>
-    <ul style={{ listStyle: "none" }}>
-      <Suspense fallback="Loading...">
-        {queryTodos?.then((todos) => {
-          return todos?.map((todo) => {
-            return (
-              <li key={todo.id}>
-                <article>
-                  <header>
-                    <h1>{todo.title}</h1>
-                  </header>
-                  <section>
-                    <p>{todo.description}</p>
-                  </section>
-                </article>
-              </li>
-            )
-          })
-        })}
-      </Suspense>
-    </ul>
-  </>)
+  const handleOnDeleteTodo = (id: Todo["id"]) => () => {
+    todoDelete(id);
+    refetch();
+  }
+
+  return (
+    <main style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 30 }}>
+      <form onSubmit={handleOnSubmit} style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+        <label title='title'>
+          <span> Title:</span>
+          <input name='title' type='text' placeholder='My awesome todo' required />
+        </label>
+        <label title='description'>
+          <span> Description:</span>
+          <input name='description' type='text' placeholder='I have to take my dogs out...' required />
+        </label>
+        <button type='submit'>Create</button>
+      </form>
+      <ul style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        listStyle: "none",
+        padding: 0,
+        width: "100%",
+      }}>
+        <Suspense fallback="Loading...">
+          {queryTodos?.then((todos) => {
+            return todos?.map((todo) => {
+              return (
+                <li
+                  style={{
+                    border: "1px solid grey",
+                    flexGrow: 33.33,
+                    padding: 4,
+                  }}
+                  key={todo.id}
+                >
+                  <article>
+                    <header>
+                      <h1>{todo.title}</h1>
+                    </header>
+                    <section>
+                      <p>{todo.description}</p>
+                    </section>
+                    <section>
+                      <button>Edit</button>
+                      <button onClick={handleOnDeleteTodo(todo.id)}>Delete</button>
+                    </section>
+                  </article>
+                </li>
+              )
+            })
+          })}
+        </Suspense>
+      </ul>
+    </main>
+  );
 }
 
 createRoot(document.getElementById('root')!).render(
