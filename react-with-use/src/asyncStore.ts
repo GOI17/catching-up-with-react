@@ -7,16 +7,16 @@ interface DataSource<R, I> {
 }
 
 export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSource<R, I> {
-  _store: Promise<IDBDatabase | null>;
+  _store: Promise<{ db: IDBDatabase, store: IDBOpenDBRequest } | null>;
 
-  _initializeStore(): Promise<IDBDatabase | null> {
+  _initializeStore(): Promise<{ db: IDBDatabase, store: IDBOpenDBRequest } | null> {
     try {
       return new Promise((resolve, reject) => {
-        const store = globalThis.indexedDB.open("react-with-use", 4);
+        const store = globalThis.indexedDB.open("react-with-use", 5);
         store.onsuccess = function(event: Event) {
           if (!isIDbRequest<IDBDatabase>(event.target)) throw new NoDbFoundError();
 
-          return resolve(event.target.result);
+          return resolve({ db: event.target.result, store });
         };
         store.onerror = function(event) {
           if (!isIDbRequest<IDBDatabase>(event.target)) throw new NoDbFoundError();
@@ -36,7 +36,7 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
 
   async _getTable(table: string) {
     try {
-      const transaction = (await this._store)?.transaction(table, "readwrite")
+      const transaction = (await this._store)?.db?.transaction(table, "readwrite")
       if (!transaction) {
         throw new BaseError("No transaction found.");
       };
@@ -52,11 +52,10 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
 
   async createUserTables(tablesCreator: (creator: IDBDatabase['createObjectStore']) => void) {
     try {
-      const db = await this._store;
-      if (!db) throw new BaseError("_createUserTables failed, no db was found.");
-
-      db.onversionchange = function() {
-        tablesCreator(this.createObjectStore);
+      const store = (await this._store)?.store
+      if (!store) throw new BaseError("createUserTables failed.");
+      store.onupgradeneeded = function() {
+        tablesCreator(this.transaction?.objectStore);
       }
     } catch (error) {
       throw error;
@@ -183,7 +182,7 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
         }
       });
     } catch (error) {
-      throw new Error("TodosStore: Get query failed.");
+      throw new Error("Get query failed.");
     }
   }
 }
@@ -193,20 +192,19 @@ class BaseError extends Error {
     super();
     this.name = "AsyncStore";
     this.message = message;
+    this.stack = "";
   }
 }
 
 class NoDbFoundError extends BaseError {
   constructor() {
     super("failed, no db found");
-    this.message = `${this.stack} ${this.message}`;
   }
 }
 
 class OpeningDbError extends BaseError {
   constructor() {
     super("failed while opening indexedDB.");
-    this.message = `${this.stack} ${this.message}`;
   }
 }
 

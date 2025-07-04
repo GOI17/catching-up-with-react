@@ -81,16 +81,17 @@ const StoreProvider = ({ children }: PropsWithChildren<{}>) => {
   const service = useMemo(() => new TodosService(store), []);
 
   useEffect(() => {
-    store.createUserTables((creator) => {
-      const table = creator(tables.todos)
-      table.createIndex("id", "id", { unique: true });
-      table.createIndex("title", "title", { unique: true });
-    });
   }, []);
 
   return (
     <TodoStoreContext.Provider value={service}>
-      {children}
+      <Suspense fallback="Loading...">
+        {store.createUserTables((creator) => {
+          const table = creator(tables.todos)
+          table.createIndex("id", "id", { unique: true });
+          table.createIndex("title", "title", { unique: true });
+        }).then(() => <>{children}</>)};
+      </Suspense>
     </TodoStoreContext.Provider>
   )
 }
