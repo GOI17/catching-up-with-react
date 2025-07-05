@@ -1,69 +1,107 @@
+interface Store {
+  db: IDBDatabase;
+  store: IDBOpenDBRequest;
+}
+
+type Tables = Record<string, Record<string, IDBIndexParameters>>;
+
 interface DataSource<R, I> {
   get(table: string, resourceId: I): Promise<R | null>;
   getAll(table: string): Promise<Array<R> | null>;
   create(table: string, resource: R): Promise<void>;
-  update(table: string, resource: Partial<Omit<R, "id">> & { id: I }): Promise<void>;
+  update(
+    table: string,
+    resource: Partial<Omit<R, "id">> & { id: I },
+  ): Promise<void>;
   delete(table: string, resourceId: I): Promise<void>;
 }
 
-export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSource<R, I> {
-  _store: Promise<{ db: IDBDatabase, store: IDBOpenDBRequest } | null>;
+export class AsyncStore<R extends {}, I extends IDBValidKey>
+  implements DataSource<R, I>
+{
+  _store: Promise<Store | null>;
 
-  _initializeStore(): Promise<{ db: IDBDatabase, store: IDBOpenDBRequest } | null> {
-    try {
-      return new Promise((resolve, reject) => {
-        const store = globalThis.indexedDB.open("react-with-use", 5);
-        store.onsuccess = function(event: Event) {
-          if (!isIDbRequest<IDBDatabase>(event.target)) throw new NoDbFoundError();
+  /**
+   *
+   * @param {Tables} tables User tables
+   * @param {number} dbVersion Database version
+   * @description Update this number if you are adding new tables ("migrations")
+   */
+  constructor(tables: Tables, dbVersion: number) {
+    this._store = this._initializeStore(tables, dbVersion);
+  }
 
-          return resolve({ db: event.target.result, store });
+  _initializeStore(tables: Tables, dbVersion: number): Promise<Store | null> {
+    return new Promise((resolve, reject) => {
+      const store = globalThis.indexedDB.open("react-with-use", dbVersion);
+      store.onsuccess = function (event: Event) {
+        if (!isIDbRequest<IDBDatabase>(event.target))
+          throw new NoDbFoundError();
+
+        event.target.result.onversionchange = function () {
+          createTables.bind(this)(tables);
         };
-        store.onerror = function(event) {
-          if (!isIDbRequest<IDBDatabase>(event.target)) throw new NoDbFoundError();
 
-          return reject(new OpeningDbError())
-        };
-        store.onblocked = function(event) {
-          if (!isIDbRequest<IDBDatabase>(event.target)) throw new NoDbFoundError();
+        createTables.bind(this.result)(tables);
 
-          return reject(new OpeningDbError())
-        };
-      });
-    } catch (error) {
-      throw error;
-    }
+        return resolve({ db: event.target.result, store });
+      };
+      store.onerror = function (event) {
+        if (!isIDbRequest<IDBDatabase>(event.target))
+          throw new NoDbFoundError();
+
+        return reject(new OpeningDbError());
+      };
+      store.onblocked = function (event) {
+        if (!isIDbRequest<IDBDatabase>(event.target))
+          throw new NoDbFoundError();
+
+        return reject(new OpeningDbError());
+      };
+      store.onupgradeneeded = function (event) {
+        if (!isIDbRequest<IDBDatabase>(event.target))
+          throw new NoDbFoundError();
+
+        createTables.bind(this.result)(tables);
+      };
+
+      function createTables(this: IDBDatabase, tables: Tables) {
+        const hasUpdates = Object.keys(tables).every(
+          (table) => !this.objectStoreNames.contains(table),
+        );
+        if (!hasUpdates) {
+          return;
+        }
+        const missingTables = Object.keys(tables)
+          .filter((table) => !this.objectStoreNames.contains(table))
+          .reduce(
+            (acc, curr) => ({ ...acc, [curr]: tables[curr] }),
+            {} as Tables,
+          );
+        Object.entries(missingTables).forEach(([tableName, tableOptions]) => {
+          const table = this.createObjectStore(tableName);
+          Object.entries(tableOptions).forEach(([tableKey, options]) => {
+            table.createIndex(tableKey, tableKey, options);
+          });
+        });
+      }
+    });
   }
 
   async _getTable(table: string) {
-    try {
-      const transaction = (await this._store)?.db?.transaction(table, "readwrite")
-      if (!transaction) {
-        throw new BaseError("No transaction found.");
-      };
-      const store = transaction.objectStore(table);
-      if (!store) {
-        throw new BaseError("No createObjectStore found.");
-      };
-      return store;
-    } catch (error) {
-      throw error;
+    const store = await this._store.then((_store) => {
+      if (_store === null) throw new NoDbFoundError();
+      return _store;
+    });
+    const transaction = store.db.transaction(table, "readwrite");
+    if (!transaction) {
+      throw new BaseError("No transaction found.");
     }
-  }
-
-  async createUserTables(tablesCreator: (creator: IDBDatabase['createObjectStore']) => void) {
-    try {
-      const store = (await this._store)?.store
-      if (!store) throw new BaseError("createUserTables failed.");
-      store.onupgradeneeded = function() {
-        tablesCreator(this.transaction?.objectStore);
-      }
-    } catch (error) {
-      throw error;
+    const objectStore = transaction.objectStore(table);
+    if (!objectStore) {
+      throw new BaseError("No createObjectStore found.");
     }
-  }
-
-  constructor() {
-    this._store = this._initializeStore();
+    return objectStore;
   }
 
   async get(_table: string, resourceId: I): Promise<R | null> {
@@ -71,21 +109,24 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
       const table = await this._getTable(_table);
       if (!table) {
         throw new BaseError("No createObjectStore found.");
-      };
+      }
       const result = table.get(resourceId);
       return new Promise((resolve, reject) => {
         result.onerror = (event) => {
-          if (!isIDbRequest(event.target)) throw new BaseError("failed getting db result.");
+          if (!isIDbRequest(event.target))
+            throw new BaseError("failed getting db result.");
 
           reject(event.target.error);
-        }
+        };
         result.onsuccess = (event) => {
-          if (!isIDbRequest<R>(event.target)) throw new BaseError("failed getting db result.");
-          resolve(event.target.result)
-        }
+          if (!isIDbRequest<R>(event.target))
+            throw new BaseError("failed getting db result.");
+          resolve(event.target.result);
+        };
       });
     } catch (error) {
-      throw new BaseError("Get query failed.");
+      if (!(error instanceof Error)) throw new UnknownError();
+      throw new BaseError(`Get query failed. ${error.toString()}`);
     }
   }
 
@@ -94,21 +135,23 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
       const table = await this._getTable(_table);
       if (!table) {
         throw new BaseError("No createObjectStore found.");
-      };
+      }
       const result = table.getAll();
       return new Promise((resolve, reject) => {
         result.onerror = (event) => {
-          if (!isIDbRequest(event.target)) throw new BaseError("failed getting db result.");
+          if (!isIDbRequest(event.target))
+            throw new BaseError("failed getting db result.");
 
           reject(event.target.error);
-        }
+        };
         result.onsuccess = (event) => {
-          if (!isIDbRequest<R[]>(event.target)) throw new BaseError("failed getting db result.");
-          resolve(event.target.result)
-        }
+          if (!isIDbRequest<R[]>(event.target))
+            throw new BaseError("failed getting db result.");
+          resolve(event.target.result);
+        };
       });
     } catch (error) {
-      throw new BaseError("GetAll query failed.");
+      throw new BaseError(`GetAll query failed. ${error.toString()}`);
     }
   }
 
@@ -117,7 +160,7 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
       const table = await this._getTable(_table);
       if (!table) {
         throw new BaseError("No createObjectStore found.");
-      };
+      }
       let result;
       if ("id" in resource) {
         result = table.add(resource, resource.id as I);
@@ -126,37 +169,43 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
       }
       return new Promise((resolve, reject) => {
         result.onerror = (event) => {
-          if (!isIDbRequest(event.target)) throw new BaseError("failed getting db result.");
+          if (!isIDbRequest(event.target))
+            throw new BaseError("failed getting db result.");
 
           reject(event.target.error);
-        }
+        };
         result.onsuccess = (event) => {
-          if (!isIDbRequest<R[]>(event.target)) throw new BaseError("failed getting db result.");
-          resolve()
-        }
+          if (!isIDbRequest<R[]>(event.target))
+            throw new BaseError("failed getting db result.");
+          resolve();
+        };
       });
     } catch (error) {
       throw new BaseError("Create query failed.");
     }
   }
 
-  async update(_table: string, resource: Partial<Omit<R, "id">> & { id: I }): Promise<void> {
+  async update(
+    _table: string,
+    resource: Partial<Omit<R, "id">> & { id: I },
+  ): Promise<void> {
     try {
       const table = await this._getTable(_table);
       if (!table) {
         throw new BaseError("No createObjectStore found.");
-      };
+      }
       const result = table.put(resource, globalThis.crypto.randomUUID());
       return new Promise((resolve, reject) => {
         result.onerror = (event) => {
-          if (!isIDbRequest(event.target)) throw new BaseError("failed getting db result.");
+          if (!isIDbRequest(event.target))
+            throw new BaseError("failed getting db result.");
 
           reject(event.target.error);
-        }
+        };
         result.onsuccess = (event) => {
           if (!isIDbRequest<R[]>(event.target)) throw new NoDbFoundError();
-          resolve()
-        }
+          resolve();
+        };
       });
     } catch (error) {
       throw new BaseError("Update query failed.");
@@ -168,18 +217,19 @@ export class AsyncStore<R extends {}, I extends IDBValidKey> implements DataSour
       const table = await this._getTable(_table);
       if (!table) {
         throw new BaseError("No createObjectStore found.");
-      };
+      }
       const result = table.delete(resourceId);
       return new Promise((resolve, reject) => {
         result.onerror = (event) => {
-          if (!isIDbRequest(event.target)) throw new BaseError("failed getting db result.");
+          if (!isIDbRequest(event.target))
+            throw new BaseError("failed getting db result.");
 
           reject(event.target.error);
-        }
+        };
         result.onsuccess = (event) => {
           if (!isIDbRequest<R[]>(event.target)) throw new NoDbFoundError();
-          resolve()
-        }
+          resolve();
+        };
       });
     } catch (error) {
       throw new Error("Get query failed.");
@@ -198,20 +248,27 @@ class BaseError extends Error {
 
 class NoDbFoundError extends BaseError {
   constructor() {
-    super("failed, no db found");
+    super("Failed, no db found");
   }
 }
 
 class OpeningDbError extends BaseError {
   constructor() {
-    super("failed while opening indexedDB.");
+    super("Failed while opening indexedDB.");
   }
 }
 
+class UnknownError extends BaseError {
+  constructor() {
+    super("Found an unknown error.");
+  }
+}
 
 function isIDbRequest<E>(value: unknown): value is IDBRequest<E> {
-  return typeof value !== "undefined" &&
+  return (
+    typeof value !== "undefined" &&
     value !== null &&
     typeof value === "object" &&
     "result" in value
+  );
 }
